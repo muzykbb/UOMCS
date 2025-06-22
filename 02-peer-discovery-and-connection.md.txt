@@ -1,0 +1,127 @@
+# UOMCS - Peer Discovery and Secure Session Establishment
+
+## 1. Introduction
+
+This document specifies the mechanisms by which UOMCS nodes discover each other and establish secure end-to-end communication sessions. While the detailed examples primarily focus on UWB as a bearer, the principles of `NodeID` advertisement and secure handshake are intended to be adaptable for UOMCS operation over other bearers via their respective Bearer Adaptation Layers (BALs).
+
+## 2. Peer Discovery
+
+Peer discovery is the process by which a UOMCS node becomes aware of other UOMCS nodes in its vicinity on a specific bearer.
+
+### 2.1. UWB Bearer Peer Discovery
+
+For the UWB bearer, discovery relies on UOMCS `BEACON` frames.
+
+#### 2.1.1. UOMCS `BEACON` Frame (UWB)
+- Each UOMCS node operating over UWB **SHOULD** periodically broadcast a `BEACON` frame via its UWB BAL. The interval **SHOULD** be configurable, with a **RECOMMENDED** default range of 1 to 5 seconds.
+- The `BEACON` frame **SHALL** be unencrypted at the UOMCS application level but **MUST** be signed using the broadcasting node's long-term private key (Ed25519 as per `05-security.md`).
+- The UOMCS-defined data fields within the `BEACON` (which the UWB BAL will encapsulate in a UWB DLL frame) **SHALL** be structured as follows (total 83 bytes + signature):
+
+| Field                      | Size (bytes) | Data Type         | Description                                                                                                                               |
+|----------------------------|--------------|-------------------|-------------------------------------------------------------------------------------------------------------------------------------------|
+| `UOMCS_Protocol_Version`   | 1            | `uint8_t`         | The major version of the UOMCS protocol this node primarily supports (e.g., 0x01). See `08-operational-considerations.md`.                  |
+| `Temporary_Identifier`     | 8            | `bytes[8]`        | A frequently changing random value or a truncated, periodically updated hash derived from the `NodeID`. Used for correlation before full handshake. |
+| `Capabilities_Bitmask`     | 2            | `uint16_t`        | Bitmask indicating supported UOMCS features. See `08-operational-considerations.md` for bit definitions.                                |
+| `Timestamp`                | 8            | `uint64_t`        | Milliseconds since Unix epoch (UTC) when the beacon was generated.                                                                          |
+| `Signature`                | 64           | `bytes[64]`       | Ed25519 signature over the concatenated content of `UOMCS_Protocol_Version`, `Temporary_Identifier`, `Capabilities_Bitmask`, and `Timestamp`. |
+
+- The UWB BAL/DLL is responsible for transmitting these beacons on one or more well-known UWB channels/configurations.
+- Nodes listening for beacons via their UWB BAL **SHALL** pass discovered peer information to the UOMCS NL or a designated discovery management entity.
+
+#### 2.1.2. UWB Active Probing
+- A node **MAY** actively probe for UOMCS peers on UWB by instructing its UWB BAL to send a `PROBE_REQ` frame.
+- **`PROBE_REQ` (UWB DLL Frame Payload):**
+
+| Field                      | Size (bytes) | Data Type         | Description                                                                    |
+|----------------------------|--------------|-------------------|--------------------------------------------------------------------------------|
+| `UOMCS_Protocol_Version`   | 1            | `uint8_t`         | Sender's UOMCS protocol version.                                               |
+| `Sender_Temporary_ID`      | 8            | `bytes[8]`        | Sender's current `Temporary_Identifier`.                                       |
+| `Target_Temporary_ID`      | 8            | `bytes[8]`        | **OPTIONAL**: Specific `Temporary_Identifier` to probe. If all zeros, it's a general probe. |
+
+- Nodes receiving a valid `PROBE_REQ` via their UWB BAL **SHOULD** respond with their standard UOMCS `BEACON` frame if they match the `Target_Temporary_ID` (if specified and non-zero) or if it's a general probe.
+
+### 2.2. Discovery over Other Bearers
+- If UOMCS operates over other bearers (e.g., Bluetooth, Wi-Fi Direct), the respective BAL **SHALL** implement a bearer-specific discovery mechanism.
+- This typically involves:
+    1.  Using the bearer's native discovery protocols (e.g., Bluetooth SDP/GATT advertisement, Wi-Fi Direct service discovery).
+    2.  Advertising a specific UOMCS service UUID or identifier.
+    3.  Exchanging UOMCS `NodeID`s or `Temporary_Identifier`s and `Capabilities` once a bearer-level connection is established or as part of the advertisement.
+- The BAL for that bearer **SHALL** then use the `PeerDiscoveredCallback` (defined in `01-protocol-layers.md`) to inform the UOMCS NL.
+
+## 3. Secure UOMCS Session Establishment
+
+Once a peer UOMCS node is discovered, a secure end-to-end UOMCS session **MUST** be established. This handshake provides mutual authentication and derives a shared symmetric `SessionKey`.
+
+### 3.1. Handshake Messages
+
+These are UOMCS control messages transmitted via a BAL.
+
+#### 3.1.1. `CONNECT_REQ` (Connection Request)
+- **Initiator (Node A):**
+    1. Generates a fresh ephemeral key pair (X25519): (ephem_privA, ephem_pubA).
+    2. Constructs a `CONNECT_REQ` message payload:
+
+    | Field                           | Size (bytes) | Data Type         | Description                                                                      |
+    |---------------------------------|--------------|-------------------|----------------------------------------------------------------------------------|
+    | `Initiator_NodeID`              | 32           | `bytes[32]`       | Node A's full UOMCS `NodeID`.                                                    |
+    | `Initiator_Ephemeral_PublicKey` | 32           | `bytes[32]`       | ephem_pubA (X25519 public key).                                                  |
+    | `Initiator_Nonce`               | 8            | `uint64_t`        | A large random nonce. Timestamps **MAY** also be used if clocks are reasonable.  |
+    | `UOMCS_Protocol_Version`        | 1            | `uint8_t`         | Node A's UOMCS protocol version.                                                 |
+    | `Cipher_Suites_Count`           | 1            | `uint8_t`         | Number (N) of cipher suites offered. If 0, implies default (AES-256-GCM).       |
+    | `Supported_Cipher_Suites`       | N * 1        | `bytes[N]`        | **OPTIONAL** (if N>0): List of N `uint8_t` codes for AEAD cipher suites Node A supports. |
+    | `Signature`                     | 64           | `bytes[64]`       | Ed25519 signature over all preceding fields in this message.                      |
+    *Total size: 74 + N + 64 = 138 + N bytes*
+
+    3. Node A instructs its BAL to send this payload to Node B.
+
+#### 3.1.2. `CONNECT_ACK` (Connection Acknowledge)
+- **Responder (Node B), upon receiving and validating `CONNECT_REQ`:**
+    1. Verifies `Initiator_Nonce` against replay (maintaining a window of recently seen nonces from this `Initiator_NodeID`).
+    2. Verifies the signature on `CONNECT_REQ`. If verification fails, the process **MUST** terminate.
+    3. If valid, Node B generates its own fresh ephemeral key pair (X25519): (ephem_privB, ephem_pubB).
+    4. Constructs a `CONNECT_ACK` message payload:
+
+    | Field                            | Size (bytes) | Data Type         | Description                                                                     |
+    |----------------------------------|--------------|-------------------|---------------------------------------------------------------------------------|
+    | `Responder_NodeID`               | 32           | `bytes[32]`       | Node B's full UOMCS `NodeID`.                                                   |
+    | `Responder_Ephemeral_PublicKey`  | 32           | `bytes[32]`       | ephem_pubB (X25519 public key).                                                 |
+    | `Responder_Nonce`                | 8            | `uint64_t`        | A large random nonce from Node B.                                               |
+    | `Echoed_Initiator_Nonce`         | 8            | `uint64_t`        | The `Initiator_Nonce` received from `CONNECT_REQ` for binding.                  |
+    | `Selected_Cipher_Suite`          | 1            | `uint8_t`         | The `uint8_t` code for the AEAD cipher suite selected by Node B. Default: AES-256-GCM (e.g., code 0x01). |
+    | `Signature`                      | 64           | `bytes[64]`       | Ed25519 signature over all preceding fields in this message.                     |
+    *Total size: 81 + 64 = 145 bytes*
+
+    5. Node B instructs its BAL to send this payload to Node A.
+
+#### 3.1.3. `CONFIRM` (Confirmation)
+- These messages are encrypted and authenticated with the newly derived `SessionKey`. The payload is an authenticator.
+- **`A_TO_B_CONFIRM` (Node A to Node B):**
+    - Payload: `Authenticator_A` (`bytes[32]`) = HMAC-SHA256(KDF_derived_MAC_Key, "ConfirmA" || Initiator_NodeID || Responder_NodeID || Initiator_Ephemeral_PublicKey || Responder_Ephemeral_PublicKey || Initiator_Nonce || Responder_Nonce)
+- **`B_TO_A_CONFIRM` (Node B to Node A):**
+    - Payload: `Authenticator_B` (`bytes[32]`) = HMAC-SHA256(KDF_derived_MAC_Key, "ConfirmB" || Initiator_NodeID || Responder_NodeID || Initiator_Ephemeral_PublicKey || Responder_Ephemeral_PublicKey || Initiator_Nonce || Responder_Nonce)
+    *(Note: A separate MAC key would be derived by the KDF alongside the SessionKey for encryption. The "ConfirmA" and "ConfirmB" strings differentiate the authenticators.)*
+
+### 3.2. Handshake Flow
+(Flow remains as previously described, using these message structures)
+
+1.  Node A sends `CONNECT_REQ`.
+2.  Node B validates `CONNECT_REQ`, derives keys, sends `CONNECT_ACK`.
+3.  Node A validates `CONNECT_ACK`, derives keys. Node A sends `A_TO_B_CONFIRM` (encrypted & MAC'd with `SessionKey` / derived MAC key).
+4.  Node B validates `A_TO_B_CONFIRM`. Node B sends `B_TO_A_CONFIRM` (encrypted & MAC'd).
+5.  Node A validates `B_TO_A_CONFIRM`. Session active. Ephemeral private keys **MUST** be discarded.
+
+### 3.3. Handshake State Machine & Timeouts
+- Each node involved in a handshake **SHALL** maintain a state for that handshake attempt (e.g., `IDLE`, `AWAIT_CONNECT_ACK`, `AWAIT_A_CONFIRM`, `AWAIT_B_CONFIRM`, `ESTABLISHED`, `FAILED`).
+- **Recommended Timeout Values (for direct UWB link):**
+    - `TIMEOUT_CONNECT_ACK`: 2 seconds.
+    - `TIMEOUT_A_CONFIRM` (Responder B waiting for A's confirm): 2 seconds.
+    - `TIMEOUT_B_CONFIRM` (Initiator A waiting for B's confirm): 2 seconds.
+    *(These values **MAY** be adjusted based on bearer characteristics or network conditions).*
+- If a timeout occurs, the handshake attempt **MUST** be considered failed, any derived key material **MUST** be discarded, and the state transitioned to `FAILED`. The node **MAY** attempt a new handshake after a randomized backoff period (e.g., 1-5 seconds).
+- If a signature validation fails, or if `CONFIRM` message validation fails (MAC mismatch), the handshake **MUST** be considered failed, keys discarded, and state moved to `FAILED`. A log entry **SHOULD** be made. No error message is sent back in this case to prevent oracle attacks.
+
+## 4. Secure Ranging (UWB Specific)
+(Section remains as previously described)
+
+## 5. Post-Connection
+(Section remains as previously described)

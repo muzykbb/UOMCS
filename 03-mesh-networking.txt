@@ -1,0 +1,234 @@
+# UOMCS - Mesh Networking and Forwarding
+
+## 1. Introduction
+
+This document specifies the Network Layer (NL) protocols for UOMCS, focusing on multi-hop mesh networking. It details an on-demand routing protocol based on AODV (Ad-hoc On-Demand Distance Vector) principles, tailored for UOMCS. This includes route discovery, route maintenance, packet forwarding, and short-term mesh queuing.
+
+## 2. Network Layer Packet Structure
+
+UOMCS Network Layer packets (NL PDUs) encapsulate Transport Layer PDUs (from `04-data-payloads.md`) or contain NL control messages (routing packets). All NL PDUs share a common header.
+
+### 2.1. Common NL Header
+
+| Field                  | Size (bytes) | Data Type         | Description                                                                 |
+|------------------------|--------------|-------------------|-----------------------------------------------------------------------------|
+| `NL_Packet_Type`       | 1            | `uint8_t`         | Type of NL packet (e.g., Data, RREQ, RREP, RERR). See Section 2.2.          |
+| `Hop_Limit` (TTL)      | 1            | `uint8_t`         | Time-To-Live, decremented at each hop. Packets with TTL=0 are dropped.        |
+| `Source_NodeID`        | 32           | `bytes[32]`       | The original UOMCS `NodeID` of the packet's sender.                           |
+| `Destination_NodeID`   | 32           | `bytes[32]`       | The final UOMCS `NodeID` of the packet's recipient.                         |
+| `NL_Payload_Length`    | 2            | `uint16_t`        | Length of the NL Payload (e.g., TPDU or routing message content) in bytes.    |
+| **NL Payload**         | Variable     | `bytes[]`         | The actual data or control message, size determined by `NL_Payload_Length`.   |
+*Total Header Size: 68 bytes*
+
+### 2.2. NL Packet Types (`NL_Packet_Type` field)
+
+| Value  | Name              | Description                                      |
+|--------|-------------------|--------------------------------------------------|
+| `0x01` | `UOMCS_DATA`      | Encapsulates a Transport Layer PDU.              |
+| `0x02` | `UOMCS_RREQ`      | Route Request packet.                            |
+| `0x03` | `UOMCS_RREP`      | Route Reply packet.                              |
+| `0x04` | `UOMCS_RERR`      | Route Error packet.                              |
+| `0x05` | `UOMCS_RREP_ACK`  | **OPTIONAL**: Acknowledgement for unicast RREP.  |
+| `0x06` | `UOMCS_HELLO`     | **OPTIONAL**: Hello message for link sensing.    |
+<!-- TODO: Consider if RREP_ACK and HELLO are core or optional extensions. For now, mark as OPTIONAL. -->
+
+## 3. UOMCS Routing Protocol (Based on AODV)
+
+### 3.1. Route Discovery
+
+Route discovery is initiated when a source node S needs to send a `UOMCS_DATA` packet to a destination node D for which it has no active, valid route.
+
+#### 3.1.1. `UOMCS_RREQ` (Route Request) Packet
+- When S initiates route discovery, it broadcasts a `UOMCS_RREQ` packet.
+- The **NL Payload** of a `UOMCS_RREQ` packet **SHALL** be structured as follows:
+
+| Field                        | Size (bytes) | Data Type         | Description                                                                                                   |
+|------------------------------|--------------|-------------------|---------------------------------------------------------------------------------------------------------------|
+| `RREQ_ID`                    | 4            | `uint32_t`        | A sequence number unique to this RREQ from `Source_NodeID`. Incremented for each new RREQ by the source.    |
+| `Originator_NodeID`          | 32           | `bytes[32]`       | The `NodeID` of the node that originated this RREQ (same as `Source_NodeID` in common header).               |
+| `Originator_Sequence_Number` | 4            | `uint32_t`        | The latest known sequence number for `Originator_NodeID`. Used to ensure route freshness.                     |
+| `Target_NodeID`              | 32           | `bytes[32]`       | The `NodeID` of the destination for which a route is sought (same as `Destination_NodeID` in common header). |
+| `Target_Sequence_Number`     | 4            | `uint32_t`        | The last known sequence number for `Target_NodeID`. Used by intermediate nodes with fresh routes to reply.   |
+| `Hop_Count_RREQ`             | 1            | `uint8_t`         | Number of hops from `Originator_NodeID` to the node processing/forwarding this RREQ. Initialized to 0 by S. |
+| `Flags_RREQ`                 | 1            | `uint8_t`         | Routing flags: `G` (Gratuitous RREP), `D` (Destination-Only reply). For UOMCS, `G` might be used by D. |
+    *Bit 0 (LSB): `G` - Gratuitous RREP flag. If set, intermediate nodes should not reply even if they have a route.*
+    *Bit 1: `D` - Destination-Only flag. If set, only the destination can reply.*
+    *Other bits reserved (must be 0).*
+*Total RREQ Payload Size: 78 bytes*
+
+#### 3.1.2. Processing `UOMCS_RREQ` by Nodes
+1.  **Source Node S:**
+    - Sets `Hop_Limit` in common NL header to `INITIAL_TTL_RREQ` (e.g., 10-30 hops).
+    - Sets `NL_Packet_Type` to `UOMCS_RREQ`.
+    - Fills `Originator_NodeID` (self), `Target_NodeID` (D).
+    - Increments its own `NodeSequenceNumber` and sets `Originator_Sequence_Number`.
+    - Sets `RREQ_ID` (unique for this source).
+    - Sets `Target_Sequence_Number` to its last known value for D (or 0 if unknown).
+    - Sets `Hop_Count_RREQ` to 0.
+    - Sets `Flags_RREQ` (e.g., `D` flag MAY be set to force destination reply).
+    - Broadcasts the `UOMCS_RREQ` packet via its BAL(s).
+
+2.  **Intermediate Node I (receiving RREQ from neighbor N):**
+    - **MUST NOT** process RREQs originating from itself.
+    - **MUST** check a local cache of recently seen (`Originator_NodeID`, `RREQ_ID`) pairs. If this RREQ is a duplicate (seen within `RREQ_DUPLICATE_TIMEOUT`, e.g., 3 seconds), it **MUST** be silently discarded. Otherwise, cache this pair.
+    - Decrements `Hop_Limit`. If 0, discard.
+    - Creates or updates a reverse route entry to `Originator_NodeID` via N in its routing table (see Section 3.4). This entry includes `Originator_Sequence_Number` and `Hop_Count_RREQ` from the received RREQ.
+    - **If Node I is `Target_NodeID` D:**
+        - It **SHALL** generate and unicast a `UOMCS_RREP` back towards S (see Section 3.1.3).
+    - **Else if Node I has an active, valid route to `Target_NodeID` D AND the `D` flag in `RREQ.Flags_RREQ` is NOT set AND its route to D has a `DestinationSequenceNumber` greater than or equal to `RREQ.Target_Sequence_Number`:**
+        - Node I **MAY** generate and unicast a `UOMCS_RREP` on behalf of D.
+        - Node I **SHOULD NOT** forward the `RREQ` further in this case to reduce flooding, unless local policy dictates otherwise (e.g., seeking a better route).
+    - **Else (Node I is not D and cannot reply on D's behalf):**
+        - Increment `Hop_Count_RREQ` in the RREQ payload.
+        - Update common header: `Source_NodeID` remains original S, `Destination_NodeID` remains original D. `Hop_Limit` is already decremented.
+        - Re-broadcasts the modified `UOMCS_RREQ` packet.
+
+#### 3.1.3. `UOMCS_RREP` (Route Reply) Packet
+- Generated by `Target_NodeID` D or an intermediate node I that can satisfy the `RREQ`.
+- Unicast back along the reverse path established by `RREQ`s.
+- The **NL Payload** of a `UOMCS_RREP` packet **SHALL** be structured as follows:
+
+| Field                        | Size (bytes) | Data Type         | Description                                                                                                   |
+|------------------------------|--------------|-------------------|---------------------------------------------------------------------------------------------------------------|
+| `Originator_NodeID`          | 32           | `bytes[32]`       | `NodeID` of the RREQ originator (S).                                                                          |
+| `Responding_NodeID`          | 32           | `bytes[32]`       | `NodeID` of the node for which the route is being supplied (D). This is `Target_NodeID` from RREQ.            |
+| `Responding_Node_Seq_Num`    | 4            | `uint32_t`        | Current sequence number of `Responding_NodeID`.                                                               |
+| `Hop_Count_RREP`             | 1            | `uint8_t`         | Hops from `Responding_NodeID` to the RREQ originator (S). Initialized to 0 by D, or reflects path from I to D. |
+| `Lifetime_RREP`              | 4            | `uint32_t`        | Time in milliseconds for which this route is considered valid.                                                  |
+| `Flags_RREP`                 | 1            | `uint8_t`         | Routing flags: `A` (Acknowledgement Required). Other bits reserved.                                           |
+    *Bit 0 (LSB): `A` - RREP_ACK required. If set, the next hop receiving this RREP should send a UOMCS_RREP_ACK.*
+*Total RREP Payload Size: 74 bytes*
+
+#### 3.1.4. Processing `UOMCS_RREP` by Nodes
+1.  **Node D (or intermediate I replying for D):**
+    - Sets `Hop_Limit` in common NL header to `INITIAL_TTL_RREP` (e.g., 30 hops).
+    - Fills RREP payload: `Originator_NodeID` (S), `Responding_NodeID` (D), `Responding_Node_Seq_Num` (D's current sequence number), `Hop_Count_RREP` (0 if D is replying; hops from I to D if I is replying), `Lifetime_RREP` (e.g., `ACTIVE_ROUTE_TIMEOUT_MS` like 3000ms-10000ms).
+    - Unicasts `UOMCS_RREP` to the next hop towards S (from its reverse route table entry for S).
+
+2.  **Intermediate Node J (receiving RREP from neighbor K, destined for S):**
+    - Creates or updates a forward route entry to `Responding_NodeID` (D) via K in its routing table (see Section 3.4). This entry stores `Responding_Node_Seq_Num`, `Hop_Count_RREP` (incremented by 1), and `Lifetime_RREP`.
+    - If `RREP.Flags_RREP` has `A` flag set, J **SHOULD** send a `UOMCS_RREP_ACK` to K.
+    - Increments `Hop_Count_RREP` in the RREP payload.
+    - Forwards the `UOMCS_RREP` packet to the next hop towards S (from its reverse route table entry for S). `Hop_Limit` in common header is decremented.
+
+3.  **Source Node S (receiving RREP):**
+    - Creates or updates a forward route entry to `Responding_NodeID` (D).
+    - The route is now established. S can begin sending `UOMCS_DATA` packets to D.
+
+#### 3.1.5. `UOMCS_RREP_ACK` (Route Reply Acknowledgement) - OPTIONAL
+- A simple acknowledgement for a received `UOMCS_RREP` if the `A` flag was set.
+- **NL Payload:** May be empty or contain a reference to the RREP being ACKed.
+- Used to confirm link viability for the RREP path.
+
+### 3.2. Route Maintenance
+
+#### 3.2.1. `UOMCS_RERR` (Route Error) Packet
+- Generated when a node detects a link break in an active route or receives an RERR for a route it uses.
+- Broadcast locally to immediate neighbors.
+- The **NL Payload** of a `UOMCS_RERR` packet **SHALL** contain a list of unreachable destinations:
+
+| Field                        | Size (bytes) | Data Type         | Description                                                                                                   |
+|------------------------------|--------------|-------------------|---------------------------------------------------------------------------------------------------------------|
+| `Error_Source_NodeID`        | 32           | `bytes[32]`       | `NodeID` of the node that originally detected the link break or initiated this RERR.                          |
+| `Num_Unreachable_Dests`      | 1            | `uint8_t`         | Number (N) of unreachable destination entries in this RERR.                                                   |
+| **Unreachable Destination Entries (repeated N times):** |              |                   |                                                                                                               |
+| `Unreachable_Dest_NodeID`    | 32           | `bytes[32]`       | `NodeID` of a destination that is now unreachable.                                                            |
+| `Unreachable_Dest_Seq_Num`   | 4            | `uint32_t`        | The sequence number for this `Unreachable_Dest_NodeID`. Used to invalidate routes with older seq nums.        |
+*Total RERR Payload Size: 33 + N * 36 bytes*
+
+#### 3.2.2. Processing `UOMCS_RERR`
+- When node M detects a link break to neighbor P, which is the next hop for destination(s) D1, D2,...:
+    - M invalidates routes to D1, D2,... via P.
+    - M constructs a `UOMCS_RERR` listing D1, D2,... with their sequence numbers. `Error_Source_NodeID` is M.
+    - M broadcasts the `UOMCS_RERR`. `Hop_Limit` is typically 1.
+- When node X receives an `RERR` from neighbor Y:
+    - For each `Unreachable_Dest_NodeID` in the `RERR`:
+        - If X has an active route to `Unreachable_Dest_NodeID` and the next hop is Y:
+            - Invalidate the route.
+            - Increment `Unreachable_Dest_Seq_Num` for that destination in its own records (if it has one).
+            - If X has upstream neighbors (precursors) using X to reach this destination, X **SHALL** generate a new `UOMCS_RERR` (with `Error_Source_NodeID` as X) listing these destinations with their updated sequence numbers and broadcast it.
+- If a source node S receives or generates an `RERR` for a destination D it is actively using, it **MAY** re-initiate route discovery for D.
+
+#### 3.2.3. `UOMCS_HELLO` Messages (Link Sensing) - OPTIONAL
+- Nodes **MAY** periodically broadcast `UOMCS_HELLO` messages to their immediate neighbors (Hop_Limit=1).
+- **NL Payload:** Can be empty or contain sender's `NodeID` and sequence number.
+- Purpose: Allows neighbors to detect link presence. If HELLOs from a neighbor stop, the link is presumed broken.
+- HELLO interval: e.g., 1-5 seconds. Missed HELLOs (e.g., 3 consecutive) trigger link break detection.
+
+### 3.3. Node Sequence Numbers
+- Each node **MUST** maintain its own `NodeSequenceNumber` (`uint32_t`).
+- It **MUST** be incremented whenever:
+    - The node originates an `RREQ`.
+    - The node originates an `RREP` for itself.
+    - The node originates an `RERR` due to a link break it detected.
+- Sequence numbers ensure loop freedom and selection of freshest routes.
+
+### 3.4. Routing Table
+
+Each node **SHALL** maintain a routing table. An entry **SHOULD** contain at least:
+
+| Field                       | Example Data Type  | Description                                                                     |
+|-----------------------------|--------------------|---------------------------------------------------------------------------------|
+| `Destination_NodeID`        | `bytes[32]`        | The final destination `NodeID`.                                                 |
+| `Next_Hop_NodeID`           | `bytes[32]`        | The `NodeID` of the immediate neighbor to forward packets to for this destination.|
+| `Next_Hop_Link_Addr`        | (BAL specific)     | Bearer-specific address of `Next_Hop_NodeID` (e.g., UWB short addr, MAC addr).  |
+| `Destination_Sequence_Number`| `uint32_t`         | The latest known sequence number for `Destination_NodeID`.                       |
+| `Route_State`               | `enum`             | E.g., `VALID`, `INVALID`, `REPAIR_PENDING`.                                     |
+| `Hop_Count`                 | `uint8_t`          | Number of hops to `Destination_NodeID`.                                         |
+| `Lifetime_Expiry_Timestamp` | `uint64_t`         | Timestamp (ms since epoch) when this route entry expires.                         |
+| `Precursors`                | List of `NodeID`s  | **OPTIONAL**: List of neighbors that use this node to reach the destination (for RERR propagation). |
+
+#### 3.4.1. Route Entry Management
+- **Addition/Update:** Routes are added/updated by `RREQ` (reverse path) and `RREP` (forward path) processing.
+- **Lifetime:** `Lifetime_Expiry_Timestamp` is set based on `RREP.Lifetime_RREP` or `REVERSE_ROUTE_LIFETIME` (e.g., 2 * `ACTIVE_ROUTE_TIMEOUT_MS`). Active use of a route (forwarding data) **SHOULD** refresh its lifetime.
+- **Invalidation:** Routes are marked `INVALID` by `RERR` processing or link break detection (e.g., DLL failure, missed HELLOs). Invalid routes **SHOULD** be kept for a short period (`BROKEN_ROUTE_TIMEOUT_MS`) before deletion to prevent re-learning stale routes.
+- **Deletion:** Expired or long-invalid routes are deleted.
+- **Multiple RREPs:** When multiple RREPs are received for the same destination:
+    1. Prefer RREP with the highest `Destination_Sequence_Number`.
+    2. If sequence numbers are equal, prefer RREP with the lowest `Hop_Count`.
+    3. If both are equal, the first RREP received **MAY** be used, or the existing route updated if the new RREP offers a fresher lifetime. Multipath routing is an **OPTIONAL** advanced feature.
+
+### 3.5. Parameter Values (Recommended Defaults)
+
+- `INITIAL_TTL_RREQ`: 20 hops
+- `INITIAL_TTL_RREP`: 30 hops
+- `INITIAL_TTL_DATA`: 64 hops
+- `RREQ_DUPLICATE_TIMEOUT_MS`: 3000 ms
+- `ACTIVE_ROUTE_TIMEOUT_MS`: 5000 ms (This is the `Lifetime_RREP` value a node typically puts in RREPs it generates for itself)
+- `REVERSE_ROUTE_LIFETIME_MS`: 2 * `ACTIVE_ROUTE_TIMEOUT_MS`
+- `BROKEN_ROUTE_TIMEOUT_MS`: 3000 ms
+- `HELLO_INTERVAL_MS` (if HELLOs used): 2000 ms
+- `ALLOWED_HELLO_LOSS` (if HELLOs used): 3 (missed HELLOs before link break)
+
+## 4. Packet Forwarding
+
+- When a node receives a `UOMCS_DATA` packet with `Destination_NodeID` not matching its own:
+    1. If `Hop_Limit` is <= 1 (after decrementing), drop the packet (unless it's the destination).
+    2. Consult its routing table for `Destination_NodeID`.
+    3. If a `VALID` route exists:
+        - Decrement `Hop_Limit` in the common NL header.
+        - Forward the packet to `Next_Hop_NodeID` via the appropriate BAL using `Next_Hop_Link_Addr`.
+        - Refresh the lifetime of the used route entry.
+    4. If no `VALID` route exists:
+        - The node **MAY** buffer the packet (see Section 5) and initiate route discovery for `Destination_NodeID`.
+        - If buffering is not supported/full, or route discovery fails, the packet **SHALL** be dropped.
+        - The node **MAY** send a `UOMCS_RERR` back to `Source_NodeID` (if a reverse path exists) indicating "Destination Unreachable."
+
+## 5. Mesh Queuing (Store-and-Forward)
+
+- Nodes **SHOULD** implement a short-term queue for `UOMCS_DATA` packets that cannot be immediately forwarded due to:
+    - Temporary BAL/DLL link unavailability to the next hop.
+    - No current route to the destination (while RREQ is in progress).
+- **Queue Management:**
+    - Each queued packet **MUST** have a queue Time-To-Live (`TTL_QUEUE_MS`, e.g., 30-60 seconds). Packets exceeding this TTL **SHALL** be dropped.
+    - Queues **SHOULD** have a maximum size (per destination or total) to prevent resource exhaustion. If full, newer packets or lower-priority packets **MAY** be dropped.
+    - The node **SHALL** periodically attempt to re-send or forward queued messages when a link or route becomes available.
+- This mechanism is for short-term interruptions. Long-term offline messaging is addressed by `06-optional-blockchain-integration.md`.
+
+## 6. Security of Routing Packets
+
+- Routing packets (`RREQ`, `RREP`, `RERR`, `HELLO`) are generally broadcast or unicast without UOMCS session encryption, as they are fundamental to establishing connectivity before secure sessions might exist with all intermediate hops.
+- However, they **MAY** be subject to integrity protection or authentication mechanisms to prevent malicious manipulation:
+    - `RREQ` and `RREP` can implicitly gain some protection if they trigger a full handshake that verifies `NodeID`s involved.
+    - **OPTIONAL:** Digital signatures on critical routing packets (e.g., `RREP`s announcing routes, `RERR`s invalidating routes) using long-term keys. This adds overhead but significantly improves routing security.
+    - <!-- TODO in 05-security.md: Detail specific security mechanisms for routing packets. For now, assume they are not encrypted but may be authenticated if this feature is added. -->
