@@ -1,4 +1,5 @@
 # UWB Offline Mesh Communication Standard (UOMCS) - Introduction
+## 0.Q: Can I use UWB as walkie talkie?
 
 ## 1. Abstract
 
