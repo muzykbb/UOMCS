@@ -1,0 +1,56 @@
+# UOMCS - Optional Blockchain Integration for Asynchronous Communication
+
+## 1. Purpose and Use Case
+
+This document specifies an **OPTIONAL** mechanism using a public blockchain as a persistent "message drop box" for long-term asynchronous messaging. This feature requires internet access.
+
+## 2. Recommended Technology Stack
+
+- **Blockchain (L2):** An EVM-compatible Layer 2 such as **Arbitrum One** or **Optimism**.
+- **Decentralized Storage:** **InterPlanetary File System (IPFS)**.
+- **Smart Contract Interface:** A standardized interface for posting and retrieving message pointers.
+
+## 3. Conceptual Workflow
+
+1.  **Sender:** Encrypts a message for the recipient's long-term public key (e.g., via ECIES), uploads the ciphertext to IPFS to get a CID, and calls the `postMessage` function on the UOMCS Mailbox smart contract, storing the recipient's `NodeID` and the CID.
+2.  **Recipient:** Upon gaining internet access, queries the smart contract for `MessagePosted` events matching its `NodeID`, retrieves the CIDs, fetches the encrypted data from IPFS, and decrypts it with its long-term private key.
+
+## 4. Smart Contract Interface (Solidity)
+
+Implementations **SHOULD** interact with a contract that implements the following interface:
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.9;
+
+/**
+ * @title IUOMCSMailbox
+ * @notice An interface for a decentralized, persistent message drop box for UOMCS nodes.
+ *         Messages are encrypted off-chain and a pointer (e.g., an IPFS CID) is stored on-chain.
+ */
+interface IUOMCSMailbox {
+    /**
+     * @notice Emitted when a message pointer has been successfully posted to the contract.
+     * @param senderWallet The blockchain address of the wallet that sent the transaction.
+     * @param recipientNodeID The UOMCS NodeID of the intended recipient. This field is indexed
+     *                        to allow for efficient searching by recipients.
+     * @param dataCID The Content Identifier (e.g., IPFS CID) pointing to the encrypted message
+     *                payload stored in a decentralized storage system.
+     * @param timestamp The block timestamp when the message was posted.
+     */
+    event MessagePosted(
+        address indexed senderWallet,
+        bytes32 indexed recipientNodeID,
+        string dataCID,
+        uint256 timestamp
+    );
+
+    /**
+     * @notice Posts a reference (CID) to an off-chain encrypted message for a UOMCS recipient.
+     * @dev This function can be called by any wallet to post a message for any recipientNodeID.
+     *      Authentication and authorization are handled by the encryption layer (only the
+     *      recipient can decrypt) and at the application level.
+     * @param recipientNodeID The UOMCS NodeID of the recipient.
+     * @param dataCID The Content Identifier for the encrypted message stored off-chain.
+     */
+    function postMessage(bytes32 recipientNodeID, string calldata dataCID) external;
+}

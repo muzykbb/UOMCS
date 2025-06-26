@@ -1,0 +1,34 @@
+# UOMCS - Data Payload Formats and Transport Services
+
+## 1. Introduction
+
+This document specifies the UOMCS Transport Layer (TL) services, including the format of Transport Layer Protocol Data Units (TPDUs) and the master registry for Application `Payload_Type` identifiers.
+
+## 2. Transport Layer PDU (TPDU) Structure
+
+All Application Layer data **SHALL** be encapsulated into one or more TPDUs. The TPDU has a 12-byte header containing `Payload_Type`, `Flags_TPDU` (including an End-of-Message bit), `Total_Chunks`, `Chunk_Index`, `Message_ID`, and `Chunk_Data_Length`, followed by the `Chunk_Data`.
+
+## 3. Segmentation and Reassembly (SAR)
+
+The TL **SHALL** segment messages larger than `MAX_CHUNK_DATA_SIZE` (minimum 256 bytes) and reassemble them at the destination using the `Message_ID`, `Total_Chunks`, and `Chunk_Index` fields. A reassembly timeout (`REASSEMBLY_TIMEOUT_MS`, e.g., 30 seconds) **MUST** be used to discard incomplete messages.
+
+## 4. Master `Payload_Type` Registry
+
+| Type ID (`uint8_t`) | Name                         | Description                                                    | Defined In |
+|---------------------|------------------------------|----------------------------------------------------------------|------------|
+| `0x01`              | Text Message                 | UTF-8 encoded string.                                          | `04`       |
+| `0x02`              | Location Share               | Structured location data (Latitude, Longitude, etc.).          | `04`       |
+| `0x03`              | Image Data                   | Reassembled compressed image data (e.g., WebP, JPEG).          | `04`       |
+| `0x04`              | Voice Data                   | Reassembled compressed audio stream data (e.g., Opus, AAC).    | `04`       |
+| `0x05`              | IPv4 Packet                  | Raw IPv4 packet, including its IP header and payload.          | `07`       |
+| `0x06`              | IPv6 Packet                  | Raw IPv6 packet, including its IP header and payload.          | `07`       |
+| `0x10`              | Broadcast/Meshcast Text      | UTF-8 encoded string for multiple recipients.                  | `04`       |
+| `0x20`              | App-Level Handshake Data     | Application-level secure object exchange data.                 | `04`       |
+| `0x30`              | UARP Request                 | UOMCS Address Resolution Protocol (UARP) request.              | `07`       |
+| `0x31`              | UARP Reply                   | UOMCS Address Resolution Protocol (UARP) reply.                | `07`       |
+| `0x32`              | Gateway Advertisement        | Gateway advertisement message for IP transport.                | `07`       |
+| `0xF0 - 0xFE`       | Experimental Use             | Reserved for experimental, non-standardized payload types.     | `04`       |
+| `0xFF`              | Reserved                     | Not to be used.                                                | `04`       |
+
+### 4.1. Payload Type `0x02`: Location Share
+This payload type is used to share geolocation information. The structure includes `Latitude` (double), `Longitude` (double), `Timestamp_Location` (uint64_t), `Horizontal_Accuracy` (float), and a `Flags_Location` byte to indicate the presence of optional fields like `Altitude`, `Speed`, and `Bearing`.

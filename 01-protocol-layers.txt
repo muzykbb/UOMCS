@@ -1,0 +1,48 @@
+# UOMCS - Protocol Stack and Layer Interfaces
+
+## 1. Introduction
+
+The UWB Offline Mesh Communication Standard (UOMCS) is defined by a multi-layered protocol stack. This architecture promotes modularity, separation of concerns, and the ability to adapt UOMCS to various underlying communication bearer technologies. Each layer provides services to the layer above it and utilizes services from the layer below it through well-defined interfaces.
+
+## 2. UOMCS Core Layers
+
+The UOMCS core protocol stack consists of the Application, Transport, and Network Layers. These layers are designed to be largely independent of the specific physical transmission medium.
+
+### 2.1. Layer 5: Application Layer (AL)
+- **Function:** The AL **SHALL** define the meaning, format, and exchange protocols for the data being transmitted between user applications or services running on UOMCS nodes.
+- **Responsibilities:**
+    - **Payload Definition:** Specifies the structure for data types like text, location, etc., as defined in the master `Payload_Type` registry in `04-data-payloads.md`.
+    - **Serialization/Deserialization:** Encodes and decodes application data into byte formats for the Transport Layer.
+
+### 2.2. Layer 4: Transport Layer (TL)
+- **Function:** Provides end-to-end message delivery services, abstracting multi-hop networking and message segmentation.
+- **Responsibilities:**
+    - **Segmentation and Reassembly (SAR):** Breaks large messages into TPDUs and reassembles them at the destination, as specified in `04-data-payloads.md`.
+    - **End-to-End Reliability (Application Responsibility):** The core UOMCS TL provides 'best-effort' end-to-end delivery. Guaranteed delivery (e.g., acknowledgements, retransmissions) is the responsibility of the Application Layer or **OPTIONAL** future transport profiles.
+    - **Multiplexing/Demultiplexing:** Uses the `Payload_Type` field to direct incoming messages to the correct application handler.
+
+### 2.3. Layer 3: Network Layer (NL)
+- **Function:** Manages multi-hop communication, handling addressing, routing, and packet forwarding.
+- **Responsibilities:**
+    - **Addressing:** Uses the unique UOMCS `NodeID` for end-to-end addressing.
+    - **Routing:** Implements the on-demand mesh routing protocol detailed in `03-mesh-networking.md`.
+    - **Packet Forwarding:** Enables nodes to act as intermediaries for other nodes' traffic.
+    - **Security Integration:** Ensures forwarded application data remains end-to-end encrypted.
+
+### 3. Bearer Adaptation Layer (BAL) Interface (Logical Layer 2.5)
+The NL interacts with one or more BALs to transmit packets over specific bearers. A BAL **SHALL** provide a standardized set of services to the NL, including: `SendPacket`, `ReceivePacketCallback`, Peer Management (`DiscoverPeers`, `PeerDiscoveredCallback`, `PeerLostCallback`), and Link Characteristic queries (`GetMTU`, `GetLinkQuality`).
+
+## 4. Bearer-Specific Layers (UWB Example)
+
+### 4.1. UOMCS UWB Data Link Layer (DLL)
+- **Function:** This layer implements the BAL interface for the UWB bearer.
+- **Responsibilities:**
+    - **UWB Secure Ranging:** Manages secure ranging procedures compliant with IEEE 802.15.4z.
+    - **UWB Handshake Management:** Handles the UWB-specific aspects of the cryptographic handshake defined in `02-peer-discovery-and-connection.md`.
+    - **UWB Frame Formatting:** Defines the UOMCS frame structure for transmission over UWB, as specified in `09-frame-formats.md`.
+    - **UWB Link Reliability:** Implements hop-by-hop reliability for unicast UWB frames using acknowledgements (ACKs) and retransmissions, as defined in `09-frame-formats.md`.
+    - **UWB Beaconing/Discovery:** Implements `BEACON` frame transmission and reception for peer discovery.
+
+### 4.2. Layer 1: Physical Layer (PHY) - UWB Example
+- **Specification:** Leverages IEEE 802.15.4z (HRP UWB).
+- **UOMCS UWB Profile:** For baseline interoperability, a UOMCS UWB Profile **SHALL** support **UWB Channel 9**. The use of other channels and PHY parameters **MAY** be supported but must be discoverable via means outside this core specification.

@@ -1,0 +1,51 @@
+# UOMCS - Peer Discovery and Secure Session Establishment
+
+## 1. Introduction
+
+This document specifies the mechanisms by which UOMCS nodes discover each other and establish secure end-to-end communication sessions. The principles of `NodeID` advertisement and secure handshake are adaptable for UOMCS operation over various bearers. The on-the-wire encapsulation of all messages described herein is defined in `09-frame-formats.md`.
+
+## 2. Peer Discovery
+
+### 2.1. UWB Bearer Peer Discovery
+For the UWB bearer, discovery relies on UOMCS `BEACON` frames. The payload for these frames is defined below.
+
+- **UOMCS `BEACON` Frame Payload:**
+    | Field                      | Size (bytes) | Data Type         | Description                                                                                             |
+    |----------------------------|--------------|-------------------|---------------------------------------------------------------------------------------------------------|
+    | `UOMCS_Protocol_Version`   | 1            | `uint8_t`         | See `08-operational-considerations.md`.                                                                 |
+    | `Temporary_Identifier`     | 8            | `bytes[8]`        | A frequently changing random value for correlation before full handshake.                               |
+    | `Capabilities_Bitmask`     | 2            | `uint16_t`        | Bitmask indicating supported features. See `08-operational-considerations.md`.                          |
+    | `Timestamp`                | 8            | `uint64_t`        | Milliseconds since Unix epoch (UTC).                                                                    |
+    | `Signature`                | 64           | `bytes[64]`       | Ed25519 signature over all preceding fields.                                                            |
+
+## 3. Secure UOMCS Session Establishment
+
+A secure session **MUST** be established via a cryptographic handshake before application data can be exchanged.
+
+### 3.1. Handshake Messages
+The handshake involves the exchange of `CONNECT_REQ`, `CONNECT_ACK`, and `CONFIRM` messages. Their payloads are defined below and transmitted using the `UOMCS_CONTROL` and `CONFIRM_SECURE` DLL frame types.
+
+- **`CONNECT_REQ` Payload:**
+    | Field                           | Size (bytes) | Data Type         | Description                                        |
+    |---------------------------------|--------------|-------------------|----------------------------------------------------|
+    | `Initiator_NodeID`              | 32           | `bytes[32]`       | Initiator's full UOMCS `NodeID`.                   |
+    | `Initiator_Ephemeral_PublicKey` | 32           | `bytes[32]`       | X25519 public key.                                 |
+    | `Initiator_Nonce`               | 8            | `uint64_t`        | A large random nonce for replay prevention.        |
+    | `UOMCS_Protocol_Version`        | 1            | `uint8_t`         | See `08-operational-considerations.md`.            |
+    | `Signature`                     | 64           | `bytes[64]`       | Ed25519 signature over all preceding fields.       |
+
+- **`CONNECT_ACK` Payload:**
+    | Field                            | Size (bytes) | Data Type         | Description                                        |
+    |----------------------------------|--------------|-------------------|----------------------------------------------------|
+    | `Responder_NodeID`               | 32           | `bytes[32]`       | Responder's full UOMCS `NodeID`.                   |
+    | `Responder_Ephemeral_PublicKey`  | 32           | `bytes[32]`       | X25519 public key.                                 |
+    | `Responder_Nonce`                | 8            | `uint64_t`        | A large random nonce from Responder.               |
+    | `Echoed_Initiator_Nonce`         | 8            | `uint64_t`        | Nonce from `CONNECT_REQ` for binding.              |
+    | `Signature`                      | 64           | `bytes[64]`       | Ed25519 signature over all preceding fields.       |
+
+### 3.2. Handshake Flow
+The handshake proceeds as a validated exchange of `CONNECT_REQ`, `CONNECT_ACK`, and encrypted `CONFIRM` messages, resulting in a shared `SessionKey`. Ephemeral keys **MUST** be discarded after the handshake to ensure Perfect Forward Secrecy.
+
+### 3.3. Handshake State Machine & Timeouts
+- Nodes **SHALL** maintain a state machine for handshakes (`IDLE`, `AWAIT_ACK`, `AWAIT_CONFIRM`, `ESTABLISHED`, `FAILED`).
+- **Recommended Timeout Values (for direct UWB link):** `TIMEOUT_CONNECT_ACK`: 2 seconds; `TIMEOUT_CONFIRM`: 2 seconds. These **MAY** be adjusted based on bearer characteristics.

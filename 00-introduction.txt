@@ -1,0 +1,81 @@
+# UWB Offline Mesh Communication Standard (UOMCS) - Introduction
+
+## 1. Abstract
+
+This document outlines the UWB Offline Mesh Communication Standard (UOMCS), a framework designed to enable secure, resilient, and internet-independent communication between devices. While UWB (Ultra-Wideband) is a primary target bearer technology for its unique ranging and communication capabilities, UOMCS is architected to be adaptable, potentially operating over or integrating with other communication bearers. The framework facilitates peer-to-peer messaging, data sharing, multi-hop mesh networking, and optional gatewaying to external networks, all with a strong emphasis on security and decentralization.
+
+## 2. Goals
+
+The primary goals of the UOMCS framework **SHALL** be:
+
+- **Connectivity in Disconnected Environments:** To provide reliable communication channels, especially where conventional internet, Wi-Fi, or cellular connectivity is unavailable or unreliable.
+- **Security and Privacy by Design:** To embed robust end-to-end encryption, strong authentication, message integrity, and privacy-preserving mechanisms as core tenets of the protocol suite.
+- **Resilient Mesh Networking:** To allow devices to form self-healing, ad-hoc networks, enabling data forwarding on behalf of others to extend communication range and improve network robustness.
+- **Efficient Data Transfer:** To optimize the transfer of various data types, including text, rich media (voice, images), and precise location data, utilizing the characteristics of the underlying bearer(s).
+- **Bearer Agnosticism (Architectural Aim):** While initially focusing on UWB, UOMCS **SHOULD** be designed with modularity that allows for future adaptation to run over other link-layer technologies (e.g., Bluetooth, Wi-Fi Direct, wired links) or to interface with them for gatewaying.
+- **Asynchronous Communication:** To provide mechanisms for both short-term (via mesh queuing) and long-term (e.g., optionally via distributed ledgers or store-and-forward gateways) asynchronous message delivery.
+- **Interoperability:** To define clear protocols and data formats that enable devices from different manufacturers to communicate effectively within a UOMCS network.
+
+## 3. Scope
+
+This standard, along with its potential companion profile documents, **SHALL** define the protocols, data formats, interfaces, and procedures for:
+
+- Node identity, peer discovery, and secure ranging (particularly for UWB).
+- Secure session establishment and cryptographic key management.
+- Data payload formatting, serialization, segmentation, and reassembly.
+- A core multi-hop mesh routing protocol.
+- Store-and-forward message queuing for transient offline scenarios.
+- **OPTIONAL:** Mechanisms for encapsulating and transporting IP packets over UOMCS.
+- **OPTIONAL:** Definition of gateway node functionality for connecting a UOMCS mesh to external IP networks (e.g., the Internet).
+- **OPTIONAL:** Guidelines and requirements for adapting UOMCS to operate over non-UWB bearer technologies.
+- **OPTIONAL:** Interaction with distributed ledgers or other persistent storage for long-term asynchronous messaging.
+
+## 4. Terminology
+
+- **Node:** Any device implementing the UOMCS protocol stack.
+- **Peer:** A node that is in direct communication range of another node over a specific bearer.
+- **Bearer:** An underlying communication technology used to transmit UOMCS frames between peers (e.g., UWB, Bluetooth, Wi-Fi Direct).
+- **UOMCS Link:** A logical communication path between two UOMCS peers over a specific bearer, established after successful peer discovery and any necessary bearer-specific connection procedures.
+- **UOMCS Session:** A secure, end-to-end encrypted communication context established between two UOMCS nodes, typically after a cryptographic handshake, independent of the underlying bearer(s) used for individual links in a multi-hop path.
+- **Mesh:** A network of UOMCS nodes that can communicate with each other directly via UOMCS links or indirectly through packet forwarding by intermediate nodes.
+- **Direct Broadcast (Bearer-Specific):** A message transmitted at the Data Link Layer of a specific bearer, intended for all nodes within direct range on that bearer.
+- **Meshcast (UOMCS Network Layer):** A UOMCS Network Layer message intended for multiple nodes, potentially all nodes, within the UOMCS mesh, propagated via UOMCS routing and forwarding.
+- **NodeID:** A globally unique identifier for a UOMCS node, cryptographically derived from its long-term public key using SHA-256.
+- **RREQ (Route Request):** A UOMCS Network Layer control packet used to discover a route to a destination `NodeID`.
+- **RREP (Route Reply):** A UOMCS Network Layer control packet used to respond to an `RREQ` and establish a route.
+- **RERR (Route Error):** A UOMCS Network Layer control packet used to signal a broken link or unreachable route.
+- **Gateway Node (GN):** A UOMCS node that provides a bridge between the UOMCS mesh network and an external network (e.g., the Internet).
+- **Adaptation Layer:** A software component or specification that maps UOMCS protocol requirements to the specific characteristics and services of an underlying non-UWB bearer technology.
+
+## 5. Document Structure
+
+This UOMCS standard is organized into several documents:
+- **`00-introduction.md`:** (This document) Provides an overview, goals, scope, and terminology.
+- **`01-protocol-layers.md`:** Describes the layered architecture of UOMCS, including the abstract interfaces.
+- **`02-peer-discovery-and-connection.md`:** Details mechanisms for discovering peers and establishing secure sessions.
+- **`03-mesh-networking.md`:** Specifies the UOMCS routing and forwarding protocols.
+- **`04-data-payloads.md`:** Defines application data payload formats and transport layer services.
+- **`05-security.md`:** Outlines the security architecture, key management, and cryptographic mechanisms.
+- **`06-optional-blockchain-integration.md`:** Describes optional integration with distributed ledgers.
+- **`07-optional-ip-transport-and-gateway.md`:** Describes optional support for IP packet transport and gateway functionality.
+- **`08-operational-considerations.md`:** Discusses general operational features and system parameters.
+- **`09-frame-formats.md`:** Provides the definitive byte-level specification for Data Link Layer frames.
+
+Additional companion documents or annexes **MAY** be developed to specify UOMCS profiles for operation over specific non-UWB bearer technologies.
+
+## 6. Document Conventions
+
+The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as described in RFC 2119 [RFC2119].
+
+## 7. Normative References
+
+- **[RFC2119]** Bradner, S., "Key words for use in RFCs to Indicate Requirement Levels", BCP 14, RFC 2119, March 1997.
+- **[IEEE802.15.4z]** IEEE Std 802.15.4z™-2020: IEEE Standard for Low-Rate Wireless Networks—Amendment 1: Enhanced Ultra Wideband (UWB) Physical Layers (PHYs) and Associated Ranging Techniques.
+- **[RFC8032]** Josefsson, S. and I. Liusvaara, "Edwards-Curve Digital Signature Algorithm (EdDSA)", RFC 8032, January 2017.
+- **[RFC7748]** Langley, A., Hamburg, M., and S. Turner, "Elliptic Curves for Security", RFC 7748, January 2016.
+- **[RFC5869]** Krawczyk, H. and P. Eronen, "HMAC-based Extract-and-Expand Key Derivation Function (HKDF)", RFC 5869, May 2010.
+- **[FIPS180-4]** National Institute of Standards and Technology (NIST), "Secure Hash Standard (SHS)", FIPS PUB 180-4, August 2015.
+- **[FIPS197]** National Institute of Standards and Technology (NIST), "Advanced Encryption Standard (AES)", FIPS PUB 197, November 2001.
+- **[NIST_SP800-38D]** National Institute of Standards and Technology (NIST), "Recommendation for Block Cipher Modes of Operation: Galois/Counter Mode (GCM) and GMAC", Special Publication 800-38D, November 2007.
+- **[RFC3629]** Yergeau, F., "UTF-8, a transformation format of ISO 10646", STD 63, RFC 3629, November 2003.
+- **[IEEE754]** IEEE Standard for Floating-Point Arithmetic, IEEE 754-2019.

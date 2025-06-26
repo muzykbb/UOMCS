@@ -1,0 +1,42 @@
+# UOMCS - Security and Privacy
+
+## 1. Introduction
+
+This document specifies the UOMCS security architecture, cryptographic primitives, key management protocols, and privacy-enhancing mechanisms.
+
+## 2. Core Security Principles
+
+The design **SHALL** provide Confidentiality, Integrity, Authenticity, Perfect Forward Secrecy (PFS), and Privacy.
+
+## 3. Cryptographic Primitives
+
+UOMCS implementations **MUST** use:
+- **Signature Algorithm:** Ed25519 [RFC8032]
+- **Key Exchange:** X25519 [RFC7748]
+- **Symmetric Cipher:** AES-256-GCM [FIPS197, NIST_SP800-38D]
+- **Hash Function:** SHA-256 [FIPS180-4]
+- **Key Derivation Function (KDF):** HKDF-SHA256 [RFC5869]
+
+## 4. Identity and Key Management
+
+- **`NodeID`:** `SHA256(Ed25519_Public_Key)`.
+- **Session Keys:** Derived from an ECDH shared secret using HKDF. The `salt` for HKDF **SHALL** be `Initiator_Nonce || Responder_Nonce`. The `info` string **SHALL** provide context separation for deriving encryption and confirmation keys.
+
+## 5. Data Protection
+
+- All `UOMCS_DATA` packets **MUST** be protected using AES-256-GCM. The plaintext for encryption is the entire NL PDU.
+- The 12-byte AES-GCM nonce and 16-byte Authentication Tag **MUST** be transmitted along with the ciphertext. Their precise placement within the `DATA_SECURE` DLL frame is specified in `09-frame-formats.md`.
+- The uniqueness of the AES-GCM nonce for each message is the primary anti-replay mechanism.
+
+## 6. Privacy Considerations
+
+- **Identifier Rotation:** The use of a `Temporary_Identifier` in beacons is **RECOMMENDED** to prevent long-term tracking.
+- **User Consent:** Applications **MUST** obtain explicit user consent before sharing sensitive data.
+- **Traffic Analysis:** NL headers are sent in the clear to enable routing, which exposes communication patterns.
+
+## 7. Security of Routing and Control Messages
+- Routing packets are not encrypted by default. This exposes them to manipulation.
+- A **RECOMMENDED** security enhancement, defined as an optional profile (`CAP_SECURE_ROUTING`), is to digitally sign `RREP` and `RERR` messages to prevent forgery.
+
+## 8. Implementation Security Requirements
+Long-term private keys **MUST** be stored securely, ideally in hardware (e.g., Secure Enclave, TPM). Implementations **MUST** use well-vetted, constant-time cryptographic libraries and a CSPRNG for all random values.

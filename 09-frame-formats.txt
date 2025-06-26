@@ -1,0 +1,52 @@
+# UOMCS - Data Link Layer Frame Formats
+
+## 1. Introduction
+
+This document provides the definitive byte-level specification for UOMCS Data Link Layer (DLL) frames. All multi-byte fields **SHALL** use Big Endian. These structures represent the payload that the UOMCS stack provides to a Bearer Adaptation Layer (BAL) for transmission.
+
+## 2. Unified DLL Header
+
+All UOMCS DLL frames **SHALL** begin with a unified 7-byte header.
+
+| Field                   | Size (bytes) | Description                                         |
+|-------------------------|--------------|-----------------------------------------------------|
+| `Frame_Control`         | 2            | A bitfield defining frame type and options.         |
+| `Sequence_Number`       | 1            | A sequence number for this frame (wraps 0-255).     |
+| `Destination_Address`   | 2            | Bearer-specific 16-bit address (`0xFFFF`=broadcast).|
+| `Source_Address`        | 2            | Bearer-specific 16-bit address of the sender.       |
+
+### 2.1. `Frame_Control` Field (16 bits)
+- **Bits 0-3: `Frame_Type`**: See Section 3.
+- **Bit 4: `Security_Enabled`**: `1` if payload is encrypted.
+- **Bit 6: `ACK_Request`**: `1` if an ACK is required.
+- **Bits 8-9: `Frame_Version`**: `0b00` for this version.
+- Other bits are reserved and **MUST** be 0.
+
+## 3. `Frame_Type` Definitions and Payload Structures
+
+### 3.1. Frame Type `0x1`: `DATA_SECURE`
+- **Purpose:** Transports an encrypted Network Layer PDU.
+- **`Frame_Control`:** `Security_Enabled=1`.
+- **Payload:** `AES-GCM Nonce` (12 bytes) + `Ciphertext` (Variable, the encrypted NL PDU) + `Authentication Tag` (16 bytes).
+- **AAD:** The 7-byte Unified DLL Header.
+
+### 3.2. Frame Type `0x2`: `ACK`
+- **Purpose:** Acknowledges a received frame.
+- **`Frame_Control`:** `Security_Enabled=0`, `ACK_Request=0`.
+- **Payload:** `Acked_Sequence_Number` (1 byte).
+
+### 3.3. Frame Type `0x3`: `BEACON`
+- **Purpose:** Broadcast for peer discovery.
+- **`Destination_Address`:** `0xFFFF`.
+- **Payload:** The "UOMCS `BEACON` Frame Payload" defined in `02`.
+
+### 3.4. Frame Type `0x4`: `UOMCS_CONTROL`
+- **Purpose:** Container for unencrypted handshake messages.
+- **Payload:** `Control_Message_Type` (1 byte) + `Control_Message_Payload` (Variable).
+- **`Control_Message_Type` Values:** `0x01` (`CONNECT_REQ`), `0x02` (`CONNECT_ACK`), `0x03` (`PROBE_REQ`).
+
+### 3.5. Frame Type `0x5`: `CONFIRM_SECURE`
+- **Purpose:** Transports encrypted handshake confirmation authenticators.
+- **`Frame_Control`:** `Security_Enabled=1`.
+- **Payload:** `AES-GCM Nonce` (12 bytes) + `Ciphertext` (32 bytes) + `Authentication Tag` (16 bytes).
+- **AAD:** The 7-byte Unified DLL Header.

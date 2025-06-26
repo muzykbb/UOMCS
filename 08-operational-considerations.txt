@@ -1,0 +1,40 @@
+# UOMCS - Operational Considerations and General Protocol Features
+
+## 1. Introduction
+
+This document specifies system-wide parameters and operational features essential for robust and interoperable UOMCS implementations.
+
+## 2. Protocol Versioning
+
+The `UOMCS_Protocol_Version` field (`uint8_t`) is split into a 4-bit Major Version and a 4-bit Minor Version. Nodes with different Major Versions are incompatible. Nodes with the same Major Version **SHOULD** interoperate at the lowest common Minor Version.
+
+## 3. Node Capabilities Exchange
+
+The `Capabilities_Bitmask` field (`uint16_t`) in `BEACON` frames advertises supported features.
+
+| Bit | Name                         | Description                                            |
+|-----|------------------------------|--------------------------------------------------------|
+| 0   | `CAP_MESH_FORWARDING`        | Willing to act as a mesh router.                       |
+| 1   | `CAP_IP_GATEWAY`             | Is an IP Gateway Node.                                 |
+| 2   | `CAP_IP_TRANSPORT`           | Supports IP packet transport.                          |
+| 3   | `CAP_BLOCKCHAIN_INTEGRATION` | Supports blockchain messaging.                         |
+| 4   | `CAP_HIGH_POWER`             | Not severely battery constrained.                      |
+| 5   | `CAP_HELLO_MESSAGES`         | Uses optional `HELLO` messages for link sensing.       |
+| 6   | `CAP_SECURE_ROUTING`         | Supports signed routing packets.                       |
+| 7-15| `Reserved`                   | Reserved for future use.                               |
+
+## 4. Standardized Error Codes (Informative)
+A list of recommended error codes (e.g., `E_HANDSHAKE_TIMEOUT`, `E_ROUTE_NOT_FOUND`) is provided for standardized diagnostics and application feedback.
+
+## 5. Power Management Considerations
+
+Implementations **SHOULD** conserve power via strategies like adaptive beaconing frequency and allowing low-battery nodes to opt-out of mesh forwarding by clearing the `CAP_MESH_FORWARDING` bit in their beacons.
+
+## 6. Network Scalability and Parameter Tuning
+
+Network performance depends on factors like `RREQ` overhead, routing table size, and gateway congestion. The default timeout and TTL values in `03-mesh-networking.md` are starting points and **MAY** be tuned for specific network conditions.
+
+## 7. Interoperability and Profiles
+
+- A **UOMCS Base Profile** is defined by all non-optional features (`00-05`, `08-09`). Implementations **MUST** support this.
+- Advanced features are defined as **Optional Profiles** (IP Transport, Blockchain Messaging, etc.), indicated by the `Capabilities_Bitmask`.

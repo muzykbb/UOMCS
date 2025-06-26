@@ -1,0 +1,34 @@
+---
+**Filename: `07-optional-ip-transport-and-gateway.md` (Final)**
+```markdown
+# UOMCS - Optional IP Transport and Internet Gateway
+
+## 1. Introduction and Use Case
+
+This document specifies an **OPTIONAL** extension for transporting standard IP packets over the UOMCS mesh, enabling IP-based applications and internet gatewaying.
+
+## 2. IP Packet Encapsulation
+
+UOMCS defines `Payload_Type` values for `IPv4 Packet` (`0x05`) and `IPv6 Packet` (`0x06`) in the master registry in `04-data-payloads.md`. The UOMCS stack presents a virtual network interface to the OS, encapsulating raw IP packets into TPDUs for routing.
+
+## 3. Address Resolution (IP to NodeID)
+
+A unified **UOMCS Address Resolution Protocol (UARP)** is used to resolve IP addresses to `NodeID`s within the mesh.
+- `UARP_REQUEST` (`Payload_Type 0x30`) is meshcast to find a `NodeID` for a target IP.
+- `UARP_REPLY` (`Payload_Type 0x31`) is unicast back with the resulting (`IP`, `NodeID`) pair.
+
+## 4. Gateway Node (GN) Functionality
+
+### 4.1. GN Requirements
+A GN **MUST** be dual-homed (UOMCS and Internet), perform NAT, and **SHOULD** provide DHCP and DNS relay services to mesh clients.
+
+### 4.2. Gateway Discovery
+A GN **SHALL** periodically meshcast a **`GATEWAY_ADVERTISEMENT`** (`Payload_Type 0x32`) message. This message contains the GN's `NodeID`, its IP address on the UOMCS side, and a metric for its backhaul quality.
+
+### 4.3. Client Node Configuration
+Clients listen for advertisements to configure their IP stack, setting their default route to the GN's IP address.
+
+## 5. Operational Considerations
+- **MTU:** A **RECOMMENDED** default MTU for the UOMCS IP interface is **1280 bytes**.
+- **Security:** UOMCS provides security within the mesh. Standard internet protocols (TLS, VPNs) are required for security beyond the gateway. The GN is a critical security point.
+- **Power & Performance:** IP transport is power-intensive. The GN is a natural performance bottleneck.
